@@ -1,70 +1,52 @@
 import { NextResponse } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
+import { Anthropic } from '@anthropic-ai/sdk';
+import { pdf } from 'pdf-parse'
 
-export const runtime = 'nodejs';
-
+// POST /api/fill
 export async function POST(req: Request) {
-  console.log('API /api/fill route triggered');
-
   try {
-    // dynamically import pdf2json for ESM safety
-    const { default: PDFParser } = await import('pdf2json');
+    // 1️⃣ Get uploaded file
     const formData = await req.formData();
-    const source = formData.get('source') as File;
+    const source = formData.get('source') as File | null;
+    if (!source) {
+      return NextResponse.json({ error: 'No source PDF uploaded' }, { status: 400 });
+    }
 
-    if (!source) throw new Error('No file uploaded');
-
-    console.log('File name:', source.name);
-    console.log('File size:', source.size);
-
+    // 2️⃣ Extract text from the PDF
     const buffer = Buffer.from(await source.arrayBuffer());
-    const pdfParser = new PDFParser();
+    const pdfData = await pdf(buffer);
+    const text = pdfData.text?.trim();
+    if (!text) throw new Error('No text extracted from PDF');
 
-    const text = await new Promise<string>((resolve, reject) => {
-      pdfParser.on('pdfParser_dataReady', (pdfData) => {
-        let fullText = '';
-        pdfData.Pages.forEach((page: any) => {
-          page.Texts.forEach((item: any) => {
-            fullText += decodeURIComponent(item.R[0].T) + ' ';
-          });
-        });
-        resolve(fullText);
-      });
-
-      pdfParser.on('pdfParser_dataError', (err: any) =>
-        reject(new Error('PDF parse error: ' + err.message))
-      );
-
-      pdfParser.parseBuffer(buffer);
-    });
-
-    if (!text.trim()) throw new Error('No text extracted from PDF');
-
+    // 3️⃣ Send text to Claude for structured JSON extraction
     const anthropic = new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY!,
     });
 
     const msg = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 3000,
+      model: 'claude-3-5-sonnet-20241022',
+      max_tokens: 1000,
       messages: [
         {
           role: 'user',
-          content: `Extract structured JSON data from this text:\n\n${text.slice(
-            0,
-            5000
-          )}`,
+          content: `Extract structured JSON data from this text:\n\n${text.slice(0, 5000)}`,
         },
       ],
     });
 
-    const extracted = msg.content?.[0]?.text || 'No content returned';
+    // 4️⃣ Extract text safely from Claude’s structured content
+    const extracted = (msg.content?.[0] as any)?.text || 'No content returned'
+      msg.content?.[0]?.type === 'text'
+        ? msg.content[0].text
+        : (msg.content?.[0] as any)?.text || 'No content returned';
+
     console.log('✅ Extraction complete');
     return NextResponse.json({ extracted });
+
   } catch (error: any) {
-    console.error('API Error:', error);
+    console.error('❌ API Error:', error);
     return NextResponse.json(
-      { error: error.message || 'Unknown error' },
+      { error: error.message || 'Unknown extraction error' },
       { status: 500 }
     );
   }
