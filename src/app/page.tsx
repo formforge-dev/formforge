@@ -13,6 +13,23 @@ export default function Home() {
   const { getRootProps: sourceProps } = useDropzone({ onDrop: onDropSource });
   const { getRootProps: targetProps } = useDropzone({ onDrop: onDropTarget });
 
+  const handleFill = async () => {
+    if (!sourceFile) return alert('Drop a source file first!');
+
+    const formData = new FormData();
+    formData.append('source', sourceFile);
+
+    try {
+      const res = await fetch('/api/fill', { method: 'POST', body: formData });
+      if (!res.ok) throw new Error('API failed: ' + res.status);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      alert(data.extracted);
+    } catch (error) {
+      alert('Error: ' + error.message);
+    }
+  };
+
   return (
     <div className="flex flex-col items-center p-8">
       <h1 className="text-3xl font-bold mb-6">FormForge: AI Form Filler</h1>
@@ -24,7 +41,7 @@ export default function Home() {
         Drop Target Form (PDF)
         {targetFile && <p>{targetFile.name}</p>}
       </div>
-      <button className="bg-blue-500 text-white px-4 py-2 rounded" onClick={() => alert('Filling... (AI Day 2)')}>Fill Form</button>
+      <button className="bg-blue-500 text-white px-4 py-2 rounded" onClick={handleFill}>Fill Form</button>
     </div>
   );
 }
