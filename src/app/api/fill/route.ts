@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { Anthropic } from '@anthropic-ai/sdk';
-import { pdf } from 'pdf-parse'
+import pdf from 'pdf-parse'
 
 // POST /api/fill
 export async function POST(req: Request) {
