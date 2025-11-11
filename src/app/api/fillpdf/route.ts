@@ -1,66 +1,49 @@
-import { NextResponse } from 'next/server';
-import { PDFDocument } from 'pdf-lib';
-
-export const runtime = 'nodejs'; // Ensure it runs in Node, not Edge
+import { NextResponse } from 'next/server'
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 
 export async function POST(req: Request) {
   try {
-    const formData = await req.formData();
-    const target = formData.get('target') as File | null;
-    const json = formData.get('data') as string | null;
+    const data = await req.formData()
+    const target = data.get('target') as File
+    const mapping = JSON.parse(data.get('mapping') as string)
 
-    if (!target || !json) {
-      return NextResponse.json(
-        { error: 'Missing target PDF or data' },
-        { status: 400 }
-      );
+    if (!target || !mapping) {
+      return NextResponse.json({ error: 'Missing target or mapping' }, { status: 400 })
     }
 
-    // Parse JSON safely
-    let data: Record<string, string>;
-    try {
-      data = JSON.parse(json);
-    } catch (err) {
-      return NextResponse.json(
-        { error: 'Invalid JSON data' },
-        { status: 400 }
-      );
-    }
+    // Load the uploaded target PDF
+    const targetBytes = await target.arrayBuffer()
+    const pdfDoc = await PDFDocument.load(targetBytes)
+    const pages = pdfDoc.getPages()
+    const firstPage = pages[0]
 
-    // Load and fill the PDF
-    const pdfBytes = await target.arrayBuffer();
-    const pdfDoc = await PDFDocument.load(pdfBytes);
-    const form = pdfDoc.getForm();
+    // Draw simple text overlay with mapping data
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica)
+    let y = 700 // start position from top of page
 
-    // Try to fill matching fields
-    const fields = form.getFields();
-    fields.forEach((field) => {
-      const name = field.getName();
-      const value = data[name];
-      if (value) {
-        try {
-          field.setText(value);
-        } catch {
-          console.warn(`Could not set field ${name}`);
-        }
-      }
-    });
+    Object.entries(mapping).forEach(([key, value]) => {
+      firstPage.drawText(`${key}: ${String(value)}`, {
+        x: 50,
+        y,
+        size: 12,
+        font,
+        color: rgb(0, 0, 0),
+      })
+      y -= 20
+    })
 
-    const filledPdf = await pdfDoc.save();
+    // Save and return the filled PDF
+    const filledBytes = await pdfDoc.save()
 
-    // Return the filled PDF as a response
-    return new NextResponse(filledPdf, {
+    return new NextResponse(filledBytes, {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': 'attachment; filename=filled_form.pdf',
+        'Content-Disposition': 'attachment; filename="filled.pdf"',
       },
-    });
-  } catch (error: any) {
-    console.error('PDF Fill Error:', error);
-    return NextResponse.json(
-      { error: error.message || 'Failed to fill PDF' },
-      { status: 500 }
-    );
+    })
+  } catch (err: any) {
+    console.error('❌ Error filling PDF:', err)
+    return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
