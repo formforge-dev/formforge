@@ -10,7 +10,7 @@ export async function POST(req: Request) {
   try {
     console.log('🟡 Upload received')
 
-    // Parse request
+    // Parse uploaded form data
     const data = await req.formData()
     const sourceFile = data.get('source') as File
     const targetFile = data.get('target') as File
@@ -19,7 +19,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Missing files' }, { status: 400 })
     }
 
-    // Example Claude request
+    // 🧠 Ask Claude to extract structured content from the source file
     const msg = await anthropic.messages.create({
       model: 'claude-3-5-sonnet-20241022',
       max_tokens: 1000,
@@ -33,7 +33,7 @@ export async function POST(req: Request) {
 
     console.log('🧠 Claude response received')
 
-    // ✅ SAFE response handling (no const conflicts)
+    // ✅ Safely extract text content
     let extracted = ''
     try {
       const content = msg.content?.[0]
@@ -46,13 +46,13 @@ export async function POST(req: Request) {
         extracted = 'No text returned from Claude.'
       }
     } catch (err) {
-      console.error('❌ Failed to extract text:', err)
+      console.error('❌ Failed to extract text from Claude:', err)
       extracted = 'Extraction error'
     }
 
     console.log('✅ Extraction complete:', extracted.slice(0, 200))
 
-    // ✅ Create a simple PDF for now (to verify download works)
+    // 📝 Create a simple PDF to verify file download works
     const pdfDoc = await PDFDocument.create()
     const page = pdfDoc.addPage([500, 400])
     page.drawText('Claude Extracted Content:\n\n' + extracted.slice(0, 500), {
@@ -60,11 +60,14 @@ export async function POST(req: Request) {
       y: 350,
       size: 12,
     })
+
+    // Save and prepare the PDF for response
     const pdfBytes = await pdfDoc.save()
+    const buffer = Buffer.from(pdfBytes) // ✅ Convert to valid response body
 
     console.log('📄 Returning PDF to client')
 
-    return new NextResponse(pdfBytes, {
+    return new NextResponse(buffer, {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
@@ -73,6 +76,6 @@ export async function POST(req: Request) {
     })
   } catch (err: any) {
     console.error('🔥 API error:', err)
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    return NextResponse.json({ error: err.message || 'Internal server error' }, { status: 500 })
   }
 }
