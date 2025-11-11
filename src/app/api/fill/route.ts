@@ -32,16 +32,26 @@ export async function POST(req: Request) {
       apiKey: process.env.ANTHROPIC_API_KEY!,
     })
 
-    const msg = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
-      max_tokens: 1000,
-      messages: [
-        {
-          role: 'user',
-          content: `Extract structured JSON data from this text:\n\n${text.slice(0, 5000)}`,
-        },
-      ],
-    })
+   console.log("🧠 Claude response received");
+
+let extracted = '';
+try {
+  const content = msg.content?.[0];
+  if (content?.type === 'text') {
+    extracted = content.text;
+  } else if (Array.isArray(content)) {
+    extracted = content.map((c: any) => c.text || '').join('\n');
+  } else {
+    console.warn("⚠️ Claude response had no text:", msg);
+    extracted = 'No text returned from Claude.';
+  }
+} catch (err) {
+  console.error("❌ Failed to extract text from Claude response:", err);
+  extracted = 'Extraction error';
+}
+
+console.log("✅ Extraction complete:", extracted.slice(0, 200));
+return NextResponse.json({ extracted });
 
     // 4️⃣ Extract text safely from Claude
     const extracted = (msg.content?.[0] as any)?.text || 'No content returned'
