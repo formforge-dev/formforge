@@ -11,17 +11,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Missing target or mapping' }, { status: 400 })
     }
 
-    // Load the uploaded target PDF
+    // Load target PDF
     const targetBytes = await target.arrayBuffer()
     const pdfDoc = await PDFDocument.load(targetBytes)
     const pages = pdfDoc.getPages()
     const firstPage = pages[0]
 
-    // Draw simple text overlay with mapping data
+    // Add simple text overlay using mapping data
     const font = await pdfDoc.embedFont(StandardFonts.Helvetica)
-    let y = 700 // start position from top of page
+    let y = 700
 
-    Object.entries(mapping).forEach(([key, value]) => {
+    for (const [key, value] of Object.entries(mapping)) {
       firstPage.drawText(`${key}: ${String(value)}`, {
         x: 50,
         y,
@@ -30,11 +30,10 @@ export async function POST(req: Request) {
         color: rgb(0, 0, 0),
       })
       y -= 20
-    })
+    }
 
-    // Save and return the filled PDF
+    // Save and return the PDF
     const filledBytes = await pdfDoc.save()
-
     return new NextResponse(filledBytes, {
       status: 200,
       headers: {
@@ -44,6 +43,6 @@ export async function POST(req: Request) {
     })
   } catch (err: any) {
     console.error('❌ Error filling PDF:', err)
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    return NextResponse.json({ error: err.message || 'Internal server error' }, { status: 500 })
   }
 }
