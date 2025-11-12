@@ -1,9 +1,14 @@
 import type { NextConfig } from "next";
+import path from "path";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  // Ensure the API routes run on the server (not static)
-  output: undefined, // make sure it’s NOT 'export'
+  output: "standalone",
+  // ✅ remove old experimental.serverActions (deprecated)
+  experimental: {},
+  // ✅ make sure Vercel sees your /src/app/api folder
+  outputFileTracingRoot: path.join(__dirname, "./"),
+  trailingSlash: false,
 };
 
 export default nextConfig;
