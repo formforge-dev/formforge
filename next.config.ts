@@ -4,11 +4,11 @@ import path from "path";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   output: "standalone",
-  // ✅ remove old experimental.serverActions (deprecated)
   experimental: {},
-  // ✅ make sure Vercel sees your /src/app/api folder
-  outputFileTracingRoot: path.join(__dirname, "./"),
-  trailingSlash: false,
+  // 👇 This helps Vercel locate your app/api under /src
+  outputFileTracingRoot: path.join(__dirname),
+  // 👇 Ensure Next knows "src" is your app directory
+  distDir: ".next",
 };
 
 export default nextConfig;
