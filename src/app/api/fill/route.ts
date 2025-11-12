@@ -1,11 +1,9 @@
 import { NextResponse } from 'next/server';
 import { Anthropic } from '@anthropic-ai/sdk';
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
-// ✅ Ensure this route runs in Node.js (not Edge) — required for Anthropic + pdf-lib
-export const runtime = 'nodejs';
+export const runtime = 'nodejs'; // Must be Node, not Edge
 
-// ✅ Initialize Anthropic client with your API key
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
 });
@@ -14,7 +12,6 @@ export async function POST(req: Request) {
   try {
     console.log('🟡 Upload received at /api/fill');
 
-    // Parse uploaded form data
     const data = await req.formData();
     const sourceFile = data.get('source') as File | null;
 
@@ -25,11 +22,9 @@ export async function POST(req: Request) {
 
     console.log('📁 Source file received:', sourceFile.name);
 
-    // Read and truncate file text for Claude prompt
     const sourceText = await sourceFile.text();
     const truncated = sourceText.slice(0, 5000);
 
-    // 🧠 Ask Claude to extract structured text or form data
     console.log('🧠 Sending request to Claude API...');
     const msg = await anthropic.messages.create({
       model: 'claude-4-sonnet-20250514',
@@ -42,9 +37,9 @@ export async function POST(req: Request) {
       ],
     });
 
-    console.log('🧠 Claude response received successfully');
+    console.log('🧠 Claude response received');
 
-    // ✅ Safely parse response content
+    // Safely get Claude output
     let extracted = '';
     try {
       const content = msg.content?.[0];
@@ -53,7 +48,6 @@ export async function POST(req: Request) {
       } else if (Array.isArray(msg.content)) {
         extracted = msg.content.map((c: any) => c.text || '').join('\n');
       } else {
-        console.warn('⚠️ Unexpected Claude response format:', msg);
         extracted = 'No text returned from Claude.';
       }
     } catch (err) {
@@ -63,13 +57,30 @@ export async function POST(req: Request) {
 
     console.log('✅ Extraction complete — first 200 chars:\n', extracted.slice(0, 200));
 
-    // 📝 Generate a small PDF to verify output
+    // 🧹 Sanitize text to remove problematic Unicode
+    const cleanText = extracted.replace(/[^\x00-\x7F]/g, ''); // remove non-ASCII chars
+
+    // 📝 Create a simple PDF
     const pdfDoc = await PDFDocument.create();
     const page = pdfDoc.addPage([600, 400]);
-    page.drawText('Claude Extracted Content:\n\n' + extracted.slice(0, 800), {
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const { height } = page.getSize();
+
+    page.drawText('Claude Extracted Content:', {
       x: 40,
-      y: 360,
+      y: height - 60,
+      size: 14,
+      font,
+      color: rgb(0.2, 0.6, 1),
+    });
+
+    page.drawText(cleanText.slice(0, 1000), {
+      x: 40,
+      y: height - 100,
       size: 11,
+      font,
+      color: rgb(1, 1, 1),
+      lineHeight: 14,
     });
 
     const pdfBytes = await pdfDoc.save();
@@ -77,7 +88,6 @@ export async function POST(req: Request) {
 
     console.log('📄 Returning extracted PDF to client');
 
-    // ✅ Return the new PDF file
     return new NextResponse(buffer, {
       status: 200,
       headers: {
