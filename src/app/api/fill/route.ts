@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
 import { Anthropic } from '@anthropic-ai/sdk';
 import { PDFDocument, rgb } from 'pdf-lib';
-import fontkit from 'fontkit';
 
-export const runtime = 'nodejs'; // ensure Node runtime, not Edge
+export const runtime = 'nodejs'; // ✅ ensure Node runtime, not Edge
 
+// Initialize Anthropic client once
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
 });
@@ -13,90 +13,93 @@ export async function POST(req: Request) {
   try {
     console.log('🟡 Upload received at /api/fill');
 
+    // --- Parse incoming form data ---
     const data = await req.formData();
-    const sourceFile = data.get('source') as File | null;
+    const sourceFile = data.get('source') as File;
+    const targetFile = data.get('target') as File;
 
-    if (!sourceFile) {
-      return NextResponse.json({ error: 'Missing source file' }, { status: 400 });
+    if (!sourceFile || !targetFile) {
+      return NextResponse.json({ error: 'Missing files' }, { status: 400 });
     }
 
-    console.log('📁 Source file received:', sourceFile.name);
-
+    // --- Extract text from the uploaded source (text fallback) ---
     const sourceText = await sourceFile.text();
-    const truncated = sourceText.slice(0, 5000);
+    console.log('📄 Source file size:', sourceText.length, 'chars');
 
-    console.log('🧠 Sending to Claude...');
+    // --- Ask Claude to summarize / extract structured text ---
     const msg = await anthropic.messages.create({
-      model: 'claude-4-sonnet-20250514',
-      max_tokens: 1500,
+      model: 'claude-4-sonnet-20241022', // ✅ Claude 4 Sonnet
+      max_tokens: 1000,
       messages: [
         {
           role: 'user',
-          content: `Extract structured text or key-value data from this PDF content (up to 5,000 chars):\n\n${truncated}`,
+          content: `Extract structured text from this PDF content (max 5000 chars shown):\n\n${sourceText.slice(
+            0,
+            5000
+          )}`,
         },
       ],
     });
 
     console.log('🧠 Claude response received');
 
+    // --- Extract text from Claude response ---
     let extracted = '';
-    const content = msg.content?.[0];
-    if (content && content.type === 'text') {
-      extracted = content.text;
-    } else if (Array.isArray(msg.content)) {
-      extracted = msg.content.map((c: any) => c.text || '').join('\n');
-    } else {
-      extracted = 'No text returned from Claude.';
+    try {
+      const content = msg.content?.[0];
+      if (content && content.type === 'text') {
+        extracted = content.text;
+      } else if (Array.isArray(msg.content)) {
+        extracted = msg.content.map((c: any) => c.text || '').join('\n');
+      } else {
+        extracted = 'No text returned from Claude.';
+      }
+    } catch (err) {
+      console.error('❌ Failed to parse Claude response:', err);
+      extracted = 'Extraction error';
     }
 
-    console.log('✅ Extraction complete — first 200 chars:\n', extracted.slice(0, 200));
+    console.log('✅ Extracted text preview:', extracted.slice(0, 200));
 
-    // 🖋️ Fetch Unicode-safe NotoSans font
-    console.log('🔤 Fetching Unicode font...');
-    const fontUrl =
-      'https://github.com/google/fonts/raw/main/ofl/notosans/NotoSans-Regular.ttf';
-    const fontBytes = await fetch(fontUrl).then((res) => res.arrayBuffer());
-
-    // 📝 Create a PDF with Unicode-safe font
+    // --- Create a new PDF with Claude’s extracted content ---
     const pdfDoc = await PDFDocument.create();
-    pdfDoc.registerFontkit(fontkit); // ✅ Register fontkit before embedding
-    const notoFont = await pdfDoc.embedFont(fontBytes);
-    const page = pdfDoc.addPage([600, 400]);
-    const { height } = page.getSize();
+    const page = pdfDoc.addPage([600, 800]);
 
-    page.drawText('Claude Extracted Content:', {
+    // Load a font that supports Unicode (use built-in standard font fallback)
+    const fontBytes = await fetch(
+      'https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Regular.ttf'
+    ).then((r) => r.arrayBuffer());
+    const customFont = await pdfDoc.embedFont(fontBytes);
+
+    const { width, height } = page.getSize();
+    const wrappedText = extracted.slice(0, 1500); // limit text to fit
+    page.drawText(`Claude Extracted Content:\n\n${wrappedText}`, {
       x: 40,
       y: height - 60,
-      size: 14,
-      font: notoFont,
-      color: rgb(0.2, 0.6, 1),
+      size: 12,
+      font: customFont,
+      color: rgb(0, 0, 0),
+      lineHeight: 16,
     });
 
-    page.drawText(extracted.slice(0, 1500), {
-      x: 40,
-      y: height - 100,
-      size: 11,
-      font: notoFont,
-      color: rgb(1, 1, 1),
-      lineHeight: 14,
-    });
+    // --- Finalize the PDF ---
+    const pdfBytes = await pdfDoc.save();
+    const buffer = Buffer.from(pdfBytes);
 
-    const pdfBytesOut = await pdfDoc.save();
-    const buffer = Buffer.from(pdfBytesOut);
+    console.log('📦 Returning filled PDF to client');
 
-    console.log('📄 Returning extracted PDF to client');
     return new NextResponse(buffer, {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': 'attachment; filename="extracted.pdf"',
+        'Content-Disposition': 'attachment; filename="filled.pdf"',
       },
     });
   } catch (err: any) {
     console.error('🔥 API error in /api/fill:', err);
     return NextResponse.json(
       { error: err.message || 'Internal server error' },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
