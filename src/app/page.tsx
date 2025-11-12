@@ -1,5 +1,7 @@
 'use client';
+
 export const dynamic = 'force-dynamic';
+export const runtime = 'edge';
 
 import { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
