@@ -2,7 +2,9 @@ export const runtime = 'nodejs'; // ✅ required so it runs on Node (not Edge)
 
 import { NextResponse } from 'next/server';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
-import fontkit from 'fontkit';
+// ✅ Fix for Turbopack + CommonJS fontkit
+import * as fontkit from 'fontkit';
+
 import { Anthropic } from '@anthropic-ai/sdk';
 
 export async function POST(req: Request) {
@@ -53,7 +55,11 @@ Return only JSON, no explanation.
       ],
     });
 
-    const extractedText = extractResponse.content[0]?.text?.trim();
+    // ✅ Safely find the first text block (ignores "thinking" or other block types)
+const textBlock = (extractResponse.content as any[]).find(
+  (b) => b.type === 'text' && typeof b.text === 'string'
+);
+const extractedText = textBlock ? textBlock.text.trim() : '';
     if (!extractedText) {
       throw new Error('Claude did not return structured extraction output.');
     }
@@ -98,14 +104,14 @@ Return only JSON, no explanation.
     // --- Save new filled PDF ---
     const filledBytes = await pdfDoc.save();
 
-    console.log('💾 PDF successfully filled — returning file.');
-    return new NextResponse(filledBytes, {
-      status: 200,
-      headers: {
-        'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="filled_${targetFile.name}"`,
-      },
-    });
+   console.log('💾 PDF successfully filled — returning file.');
+return new NextResponse(Buffer.from(filledBytes), {
+  status: 200,
+  headers: {
+    'Content-Type': 'application/pdf',
+    'Content-Disposition': `attachment; filename="filled_${targetFile.name}"`,
+  },
+});
   } catch (err: any) {
     console.error('❌ API error in /api/fill:', err);
     return NextResponse.json(
