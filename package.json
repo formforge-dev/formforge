@@ -13,6 +13,7 @@
     "@clerk/nextjs": "^6.34.5",
     "@stripe/stripe-js": "^8.3.0",
     "@supabase/supabase-js": "^2.80.0",
+    "fontkit": "^2.0.4",
     "lucide-react": "^0.553.0",
     "next": "16.0.1",
     "pdf-lib": "^1.17.1",
