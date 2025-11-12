@@ -32,7 +32,7 @@ export async function POST(req: Request) {
     // 🧠 Ask Claude to extract structured text or form data
     console.log('🧠 Sending request to Claude API...');
     const msg = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
+      model: 'claude-4-sonnet-20250514',
       max_tokens: 1000,
       messages: [
         {
