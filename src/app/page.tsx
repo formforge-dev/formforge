@@ -1,17 +1,12 @@
 'use client';
-export const dynamic = "force-dynamic";
-export const revalidate = 0; 
+export const dynamic = 'force-dynamic';
 
 import { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from '@/lib/supabaseClient'; // ✅ import our helper
 
 export default function Home() {
   // ✅ Move Supabase client initialization *inside* the component
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
 
   const [sourceFile, setSourceFile] = useState<File | null>(null);
   const [targetFile, setTargetFile] = useState<File | null>(null);
