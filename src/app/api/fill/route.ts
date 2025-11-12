@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { Anthropic } from '@anthropic-ai/sdk';
 import { PDFDocument, rgb } from 'pdf-lib';
-import fontkit from '@pdf-lib/fontkit';
+import fontkit from 'fontkit';
 
 export const runtime = 'nodejs'; // ensure Node runtime, not Edge
 
