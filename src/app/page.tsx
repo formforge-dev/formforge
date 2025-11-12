@@ -2,10 +2,11 @@
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'edge';
+export const revalidate = false; // ✅ Explicitly disable all static prerendering
 
 import { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { supabase } from '@/lib/supabaseClient'; // ✅ import our helper
+import { supabase } from '@/lib/supabaseClient';
 
 export default function Home() {
   // ✅ Move Supabase client initialization *inside* the component
