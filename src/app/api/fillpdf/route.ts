@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
-import * as fontkit from 'fontkit';
+// @ts-ignore — dynamic import for CJS compatibility
+const fontkit = require('fontkit');
 
 export const runtime = 'nodejs'; // ✅ force Node runtime, not Edge
 
