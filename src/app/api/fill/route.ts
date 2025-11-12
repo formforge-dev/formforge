@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { Anthropic } from '@anthropic-ai/sdk';
 import { PDFDocument, rgb } from 'pdf-lib';
+import fontkit from '@pdf-lib/fontkit';
 
-export const runtime = 'nodejs'; // Ensure we run in Node (not Edge)
+export const runtime = 'nodejs'; // ensure Node runtime, not Edge
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
@@ -52,20 +53,22 @@ export async function POST(req: Request) {
 
     // 🖋️ Fetch Unicode-safe NotoSans font
     console.log('🔤 Fetching Unicode font...');
-    const fontUrl = 'https://github.com/google/fonts/raw/main/ofl/notosans/NotoSans-Regular.ttf';
+    const fontUrl =
+      'https://github.com/google/fonts/raw/main/ofl/notosans/NotoSans-Regular.ttf';
     const fontBytes = await fetch(fontUrl).then((res) => res.arrayBuffer());
 
     // 📝 Create a PDF with Unicode-safe font
     const pdfDoc = await PDFDocument.create();
+    pdfDoc.registerFontkit(fontkit); // ✅ Register fontkit before embedding
+    const notoFont = await pdfDoc.embedFont(fontBytes);
     const page = pdfDoc.addPage([600, 400]);
-    const font = await pdfDoc.embedFont(fontBytes);
     const { height } = page.getSize();
 
     page.drawText('Claude Extracted Content:', {
       x: 40,
       y: height - 60,
       size: 14,
-      font,
+      font: notoFont,
       color: rgb(0.2, 0.6, 1),
     });
 
@@ -73,7 +76,7 @@ export async function POST(req: Request) {
       x: 40,
       y: height - 100,
       size: 11,
-      font,
+      font: notoFont,
       color: rgb(1, 1, 1),
       lineHeight: 14,
     });
@@ -93,7 +96,7 @@ export async function POST(req: Request) {
     console.error('🔥 API error in /api/fill:', err);
     return NextResponse.json(
       { error: err.message || 'Internal server error' },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
