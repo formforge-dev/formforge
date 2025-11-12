@@ -9,5 +9,6 @@
   },
   "env": {
     "NEXT_PRIVATE_TARGET": "server"
-  }
+  },
+  "rootDirectory": "src"
 }
