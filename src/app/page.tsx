@@ -1,15 +1,35 @@
 'use client';
 
 export const dynamic = 'force-dynamic';
-export const runtime = 'edge';
-export const revalidate = false;
+// ❌ Remove edge runtime (breaks env vars on Vercel)
+// export const runtime = 'edge';
 
 import { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { supabase } from '@/lib/supabaseClient';
+import { createClient } from '@supabase/supabase-js';
 
 export default function Home() {
-  // ✅ Move Supabase client initialization *inside* the component
+  // ✅ Initialize Supabase *inside* the component
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    console.error('❌ Missing Supabase environment variables.');
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-black text-red-500 text-center p-10">
+        <div>
+          <h1 className="text-2xl font-bold mb-4">Missing Supabase Config</h1>
+          <p>
+            Please ensure <code>NEXT_PUBLIC_SUPABASE_URL</code> and{' '}
+            <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code> are defined in your
+            Vercel Environment Variables.
+          </p>
+        </div>
+      </main>
+    );
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
   const [sourceFile, setSourceFile] = useState<File | null>(null);
   const [targetFile, setTargetFile] = useState<File | null>(null);
@@ -43,6 +63,7 @@ export default function Home() {
     setStatus('🔍 Extracting data from source…');
 
     try {
+      // 1️⃣ Extract data
       const extractForm = new FormData();
       extractForm.append('source', sourceFile);
 
@@ -57,6 +78,7 @@ export default function Home() {
 
       setStatus('🧠 Mapping data to target form…');
 
+      // 2️⃣ Fill the target
       const fd = new FormData();
       fd.append('target', targetFile);
       fd.append('mapping', JSON.stringify(parsed));
@@ -102,7 +124,51 @@ export default function Home() {
         FormForge <span className="text-white">AI Form Filler ⚡</span>
       </h1>
 
-      {/* ...rest of your UI stays the same... */}
+      {/* Source Upload */}
+      <div
+        {...sourceZone.getRootProps({
+          className:
+            'border-2 border-dashed border-gray-600 p-6 mb-4 cursor-pointer w-72 text-center rounded-xl bg-gray-900 hover:bg-gray-800 transition',
+        })}
+      >
+        <input {...sourceZone.getInputProps()} />
+        <p className="text-sm">Drop Source (PDF / Image)</p>
+        {sourceFile && (
+          <p className="mt-2 text-green-400 truncate">{sourceFile.name}</p>
+        )}
+      </div>
+
+      {/* Target Upload */}
+      <div
+        {...targetZone.getRootProps({
+          className:
+            'border-2 border-dashed border-gray-600 p-6 mb-6 cursor-pointer w-72 text-center rounded-xl bg-gray-900 hover:bg-gray-800 transition',
+        })}
+      >
+        <input {...targetZone.getInputProps()} />
+        <p className="text-sm">Drop Target Form (PDF)</p>
+        {targetFile && (
+          <p className="mt-2 text-green-400 truncate">{targetFile.name}</p>
+        )}
+      </div>
+
+      <button
+        onClick={handleExtractAndFill}
+        disabled={loading}
+        className={`px-6 py-3 rounded-lg text-white font-semibold transition ${
+          loading
+            ? 'bg-gray-600 cursor-not-allowed'
+            : 'bg-blue-600 hover:bg-blue-700'
+        }`}
+      >
+        {loading ? 'Processing… ⏳' : 'Auto-Fill & Download 🚀'}
+      </button>
+
+      <p className="text-sm text-gray-400 mt-4 h-6">{status}</p>
+
+      <footer className="mt-10 text-xs text-gray-600 text-center">
+        © {new Date().getFullYear()} FormForge — Built with Next.js + Claude + Supabase
+      </footer>
     </main>
   );
 }
