@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'edge';
-export const revalidate = false; // ✅ Explicitly disable all static prerendering
+export const revalidate = false;
 
 import { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
