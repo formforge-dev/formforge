@@ -9,18 +9,19 @@ import { Anthropic } from '@anthropic-ai/sdk';
 
 export async function POST(req: Request) {
   try {
-    console.log('📥 Upload received at /api/fill');
-    const data = await req.formData();
+ console.log('📤 Upload received at /api/fill');
 
-    const sourceFile = data.get('source') as File;
-    const targetFile = data.get('target') as File;
+const data = await req.formData();
+const sourceFile = data.get('source');
+const targetFile = data.get('target');
 
-    if (!sourceFile || !targetFile) {
-      return NextResponse.json(
-        { error: 'Missing source or target file.' },
-        { status: 400 }
-      );
-    }
+if (!sourceFile || !targetFile) {
+  console.error('❌ Missing source or target file.');
+  return NextResponse.json(
+    { error: 'Missing source or target file.' },
+    { status: 400 }
+  );
+}
 
     // --- Claude Extraction Phase ---
     console.log('🧠 Sending source PDF to Claude for data extraction...');
