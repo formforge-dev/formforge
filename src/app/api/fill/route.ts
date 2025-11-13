@@ -1,126 +1,146 @@
 import { NextResponse } from "next/server";
-import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
-import * as fontkit from "fontkit";
-import Anthropic from "@anthropic-ai/sdk";
+import { Anthropic } from "@anthropic-ai/sdk";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+
+export const runtime = "nodejs"; // required for pdf-lib + Vercel
+
+// Claude client
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY!,
+});
 
 export async function POST(req: Request) {
   try {
-    console.log("📩 Upload received at /api/fill");
+    console.log("🟡 /api/fill called...");
 
+    // Parse uploaded files
     const form = await req.formData();
-    const sourceFile = form.get("source") as File | null;
-    const targetFile = form.get("target") as File | null;
+    const source = form.get("source") as File | null;
+    const target = form.get("target") as File | null;
 
-    if (!sourceFile || !targetFile) {
+    if (!source || !target) {
       return NextResponse.json(
         { error: "Missing source or target file." },
         { status: 400 }
       );
     }
 
-    // ---- Convert source PDF to Base64 (Claude requires Base64) ----
-    const sourceArray = new Uint8Array(await sourceFile.arrayBuffer());
-    const sourceBase64 = Buffer.from(sourceArray).toString("base64");
+    console.log(
+      `📥 Received -> Source: ${source.name}, Target: ${target.name}`
+    );
 
-    // ---- Claude Extraction ----
-    const client = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY!,
-    });
+    // -------- STEP 1: Extract text from source PDF --------
+    const sourceText = await source.text(); // rough text extraction
 
-    const extractionPrompt = `
-You are an AI that extracts structured form data from uploaded PDFs.
-Return ONLY valid JSON. No explanations.
-`;
+    console.log("📤 Sending extraction request to Claude...");
 
-    console.log("📤 Sending PDF to Claude…");
-
-    const extractResponse = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 4096,
+    const ai = await anthropic.messages.create({
+      model: "claude-3-5-sonnet-latest", // recommended stable model
+      max_tokens: 3000,
       messages: [
         {
           role: "user",
-          content: [
-            {
-              type: "document",
-              source: {
-                type: "base64",
-                media_type: "application/pdf",
-                data: sourceBase64,
-              },
-            },
-            {
-              type: "text",
-              text: extractionPrompt,
-            },
-          ],
+          content: `
+You are FormForge AI.
+
+Extract structured JSON from the following document text.
+
+Return ONLY valid JSON, matching this format exactly:
+
+{
+  "fields": {
+     "full_name": "",
+     "address": "",
+     "phone": "",
+     ...
+  }
+}
+
+Extract as many fields as possible.
+Document text begins below:
+
+${sourceText.slice(0, 7000)}
+        `,
         },
       ],
     });
 
-   // ---- Extract JSON safely ----
-const textBlock = extractResponse.content.find(
-  (b: any) => b.type === "text"
-);
+    // Extract AI text safely
+    let extracted = "";
+    const block = ai.content[0];
 
-if (!textBlock || textBlock.type !== "text") {
-  throw new Error("Claude returned no text block.");
-}
+    if (block.type === "text") {
+      extracted = block.text;
+    } else {
+      throw new Error("Claude returned unexpected content format.");
+    }
 
-const extractedText = textBlock.text.trim();
+    console.log("🧠 Claude extracted JSON:", extracted.slice(0, 200));
 
-// Remove ```json fences if present
-const cleanJSON = extractedText.replace(/```json|```/g, "").trim();
+    // Parse JSON cleanly
+    const cleaned = extracted.replace(/```json|```/g, "").trim();
+    const parsed = JSON.parse(cleaned);
 
-let mapping: Record<string, any> = {};
-try {
-  mapping = JSON.parse(cleanJSON);
-} catch (err) {
-  console.error("❌ JSON parse error:", err);
-  throw new Error("Claude returned invalid JSON.");
-}
+    if (!parsed.fields) {
+      throw new Error("Extracted JSON missing `fields` property.");
+    }
 
-    console.log("✅ Extracted mapping:", mapping);
+    // -------- STEP 2: Fill Target PDF --------
+    console.log("📄 Loading target PDF...");
+    const targetBytes = new Uint8Array(await target.arrayBuffer());
+    const pdfDoc = await PDFDocument.load(targetBytes);
 
-    // ---- Load target PDF ----
-    const targetArray = new Uint8Array(await targetFile.arrayBuffer());
-    const pdfDoc = await PDFDocument.load(targetArray);
-
-    pdfDoc.registerFontkit(fontkit);
-    const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    // Use built-in Helvetica font -> avoids all fontkit issues
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
     const pages = pdfDoc.getPages();
-    const page = pages[0];
-    let y = page.getHeight() - 50;
+    const firstPage = pages[0];
 
-    Object.entries(mapping).forEach(([key, value]) => {
-      if (typeof value === "string") {
-        page.drawText(`${key}: ${value}`, {
-          x: 50,
-          y,
-          size: 12,
-          font: helvetica,
-          color: rgb(0, 0, 0),
-        });
-        y -= 20;
-      }
+    let y = 750; // text starting vertical position
+
+    firstPage.drawText("FormForge AI Auto-Filled Data:", {
+      x: 40,
+      y,
+      size: 14,
+      font,
+      color: rgb(0.2, 0.6, 1),
     });
 
-    // ---- Export final PDF ----
-    const finalBytes = await pdfDoc.save();
-    const finalBuffer = Buffer.from(finalBytes);
+    y -= 30;
 
-    return new NextResponse(finalBuffer, {
+    // Write each field one per line
+    for (const [key, value] of Object.entries(parsed.fields)) {
+      firstPage.drawText(`${key}: ${value}`, {
+        x: 40,
+        y,
+        size: 10,
+        font,
+        color: rgb(1, 1, 1),
+      });
+      y -= 20;
+      if (y < 40) break; // prevent overflow
+    }
+
+    console.log("✍️ PDF writing complete.");
+
+    const filledPdfBytes = await pdfDoc.save();
+    const fileBuffer = Buffer.from(filledPdfBytes);
+
+    console.log("✅ PDF ready — returning file.");
+
+    return new NextResponse(fileBuffer, {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="filled_${targetFile.name}"`,
+        "Content-Disposition": 'attachment; filename="formforge_filled.pdf"',
       },
     });
   } catch (err: any) {
-    console.error("❌ /api/fill error", err);
+    console.error("🔥 /api/fill error:", err);
     return NextResponse.json(
-      { error: err.message || "Unexpected server error" },
+      {
+        error: err.message || "Internal server error",
+      },
       { status: 500 }
     );
   }
