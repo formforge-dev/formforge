@@ -35,7 +35,7 @@ export async function POST(req: Request) {
     console.log("📤 Sending extraction request to Claude...");
 
     const ai = await anthropic.messages.create({
-      model: "claude-3-5-sonnet-latest", // recommended stable model
+      model: "claude-sonnet-4-5-20250929", // recommended stable model
       max_tokens: 3000,
       messages: [
         {
