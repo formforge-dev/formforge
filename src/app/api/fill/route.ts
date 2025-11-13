@@ -1,46 +1,50 @@
-export const runtime = "nodejs"; // Required for pdf-lib + Buffer
+import { NextResponse } from 'next/server';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import * as fontkit from 'fontkit';
+import Anthropic from '@anthropic-ai/sdk';
 
-import { NextResponse } from "next/server";
-import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
-import * as fontkit from "fontkit";
-import Anthropic from "@anthropic-ai/sdk";
+export const runtime = 'nodejs'; // IMPORTANT for Vercel
 
 export async function POST(req: Request) {
   try {
     console.log("📥 Upload received at /api/fill");
 
     const data = await req.formData();
-    const sourceFile = data.get("source") as File | null;
-    const targetFile = data.get("target") as File | null;
+
+    const sourceFile = data.get('source') as File | null;
+    const targetFile = data.get('target') as File | null;
 
     if (!sourceFile || !targetFile) {
       return NextResponse.json(
-        { error: "Missing source or target file." },
+        { error: 'Missing source or target file.' },
         { status: 400 }
       );
     }
 
-    // -----------------------------------------------------
-    // 🟦 1. Convert uploaded source PDF to Uint8Array
-    // -----------------------------------------------------
-    const sourceBytes = new Uint8Array(await sourceFile.arrayBuffer());
+    // --------------------------------------------------------------------
+    // 1. Convert uploaded PDFs → ArrayBuffer → Base64 (Claude requires this)
+    // --------------------------------------------------------------------
+    const sourceBytes = await sourceFile.arrayBuffer();
+    const targetBytes = await targetFile.arrayBuffer();
 
-    // -----------------------------------------------------
-    // 🟦 2. Prepare Anthropic client
-    // -----------------------------------------------------
+    const sourceBase64 = Buffer.from(sourceBytes).toString('base64');
+    const targetBase64 = Buffer.from(targetBytes).toString('base64');
+
+    // --------------------------------------------------------------------
+    // 2. Ask Claude to extract JSON from the source PDF
+    // --------------------------------------------------------------------
     const anthropic = new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY!,
     });
 
     const extractionPrompt = `
 You are an AI document extraction engine.
-Extract all structured key–value text from the uploaded PDF.
+Extract ALL structured key/value data from the uploaded PDF.
 Return ONLY valid JSON. No explanations.
 `;
 
-    // -----------------------------------------------------
-    // 🟦 3. Send PDF → Claude (Sonnet 4, correct document block)
-    // -----------------------------------------------------
+    console.log("📤 Sending PDF → Claude Sonnet 4");
+
     const extractResponse = await anthropic.messages.create({
       model: "claude-sonnet-4-20250514",
       max_tokens: 4096,
@@ -50,88 +54,82 @@ Return ONLY valid JSON. No explanations.
           content: [
             {
               type: "document",
-              source: sourceBytes, // Uint8Array is valid for Claude-4
-              media_type: "application/pdf",
+              source: {
+                type: "base64",
+                media_type: "application/pdf",
+                data: sourceBase64,
+              },
             },
             {
               type: "text",
               text: extractionPrompt,
-            },
-          ],
-        },
-      ],
+            }
+          ]
+        }
+      ]
     });
 
-    // -----------------------------------------------------
-    // 🟦 4. Extract JSON text safely
-    // -----------------------------------------------------
+    // --------------------------------------------------------------------
+    // 3. Find Claude's JSON text block
+    // --------------------------------------------------------------------
     const textBlock = (extractResponse.content as any[]).find(
       (c) => c.type === "text"
     );
 
-    const extractedText = textBlock?.text?.trim() || "";
-
-    if (!extractedText) {
-      throw new Error("Claude returned no text content.");
+    if (!textBlock) {
+      throw new Error("Claude did not return JSON text.");
     }
 
-    console.log("✨ Extraction complete — first 200 chars:");
-    console.log(extractedText.slice(0, 200));
+    const extractedJson = textBlock.text.trim();
 
-    let mapping = {};
+    console.log("📄 Extracted JSON:", extractedJson.slice(0, 200));
 
-    try {
-      mapping = JSON.parse(
-        extractedText.replace(/```json|```/g, "").trim()
-      );
-    } catch (err) {
-      console.error("❌ JSON parse failed:", err);
-      throw new Error("Claude did not return valid JSON.");
-    }
+    const mapping = JSON.parse(extractedJson);
 
-    // -----------------------------------------------------
-    // 🟦 5. Load target PDF and fill it
-    // -----------------------------------------------------
-    const targetBytes = new Uint8Array(await targetFile.arrayBuffer());
+    // --------------------------------------------------------------------
+    // 4. Fill the target PDF
+    // --------------------------------------------------------------------
     const pdfDoc = await PDFDocument.load(targetBytes);
 
-    // Enable unicode fonts
+    // register fontkit for unicode fonts
     pdfDoc.registerFontkit(fontkit);
 
-    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
     const pages = pdfDoc.getPages();
     const page = pages[0];
+    const { width, height } = page.getSize();
 
-    let y = page.getSize().height - 50;
+    let y = height - 40;
 
     Object.entries(mapping).forEach(([key, value]) => {
       if (typeof value === "string") {
         page.drawText(`${key}: ${value}`, {
-          x: 50,
+          x: 40,
           y,
-          size: 11,
-          font,
+          size: 12,
+          font: helvetica,
           color: rgb(0, 0, 0),
         });
-        y -= 18;
+        y -= 20;
       }
     });
 
-    // -----------------------------------------------------
-    // 🟦 6. Return filled PDF as download
-    // -----------------------------------------------------
+    // save filled PDF
     const filledBytes = await pdfDoc.save();
-    const bufferOut = Buffer.from(filledBytes);
 
-    return new NextResponse(bufferOut, {
+    console.log("✅ PDF successfully filled — returning file.");
+
+    return new NextResponse(Buffer.from(filledBytes), {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
         "Content-Disposition": `attachment; filename="filled_${targetFile.name}"`,
       },
     });
+
   } catch (err: any) {
-    console.error("🔥 API error in /api/fill:", err);
+    console.error("❌ API Error /api/fill:", err);
     return NextResponse.json(
       { error: err.message || "Unexpected server error" },
       { status: 500 }
