@@ -179,17 +179,6 @@ NO explanation. ONLY JSON.
 
     // Save and send back PDF
     console.log("💾 Saving final PDF…");
-    // >>> DEBUG TEST: Draw bright red text at top-left corner <<<
-const pages = pdfDoc.getPages();
-const page = pages[0]; // force first page
-
-page.drawText("DEBUG TEST TEXT", {
-  x: 20,
-  y: page.getHeight() - 40, // top-left
-  size: 28,
-  color: rgb(1, 0, 0), // bright red
-});
-console.log("🔍 DEBUG TEXT DRAWN ON PAGE");
     const finalBytes = await pdfDoc.save();
     const buffer = Buffer.from(finalBytes);
 
