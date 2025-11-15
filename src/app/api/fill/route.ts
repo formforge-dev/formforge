@@ -1,41 +1,25 @@
 import { NextResponse } from "next/server";
 import { Anthropic } from "@anthropic-ai/sdk";
-import {
-  PDFDocument,
-  StandardFonts,
-  rgb,
-} from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
-export const runtime = "nodejs"; // required for pdf-lib + Vercel
+export const runtime = "nodejs";
 
-// Claude client
+// Anthropic client (your key MUST be set in Vercel or .env.local)
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
 });
 
-type ExtractedFields = {
-  fields: Record<string, string>;
-};
-
-type MappingResult = {
-  mappings: Record<string, string | null>; // targetFieldName -> sourceFieldKey | null
-};
-
-// Utility: safely parse Claude JSON text
-function parseClaudeJSON<T = any>(raw: string): T {
-  const cleaned = raw
-    .replace(/```json/gi, "")
-    .replace(/```/g, "")
-    .trim();
-
-  return JSON.parse(cleaned);
+// Helper: convert File → Base64
+async function fileToBase64(file: File): Promise<string> {
+  const buffer = Buffer.from(await file.arrayBuffer());
+  return buffer.toString("base64");
 }
 
 export async function POST(req: Request) {
   try {
     console.log("🟡 /api/fill called...");
 
-    // -------- STEP 0: Parse uploaded files --------
+    // Read submitted FormData
     const formData = await req.formData();
     const source = formData.get("source") as File | null;
     const target = formData.get("target") as File | null;
@@ -43,303 +27,185 @@ export async function POST(req: Request) {
     if (!source || !target) {
       return NextResponse.json(
         { error: "Missing source or target file." },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
-    console.log(
-      `📥 Received -> Source: ${source.name}, Target: ${target.name}`,
-    );
+    console.log(`📥 Received → Source: ${source.name}, Target: ${target.name}`);
 
-    // -------- STEP 1: Extract text from source --------
-    // For now we use source.text() as a rough text extraction.
-    // Later you can upgrade this to use a proper PDF text parser or Claude Vision.
-    const sourceText = await source.text();
-    const truncatedText =
-      sourceText.length > 12000
-        ? sourceText.slice(0, 12000)
-        : sourceText;
+    // Convert both files to Base64 for Claude Vision
+    console.log("📤 Converting PDFs to Base64…");
+    const sourceBase64 = await fileToBase64(source);
+    const targetBase64 = await fileToBase64(target);
 
-    console.log("📤 Sending extraction request to Claude...");
+    // ============================
+    //   STEP 1 — Claude Extraction
+    // ============================
 
-    // -------- STEP 2: Ask Claude to extract structured fields --------
-    const extractResponse = await anthropic.messages.create({
-      model: "claude-sonnet-4-5-20250929", // use your preferred model ID
-      max_tokens: 3000,
+    console.log("🧠 Sending Vision request to Claude…");
+
+    const aiResponse = await anthropic.messages.create({
+      model: "claude-sonnet-4-5-20250929", // YOUR AVAILABLE VISION MODEL
+      max_tokens: 4000,
       temperature: 0,
       messages: [
         {
           role: "user",
-          content: `
-You are FormForge AI, an expert paperwork assistant.
+          content: [
+            {
+              type: "text",
+              text: `
+You are FormForge AI.
 
-Task: 
-Read the following document text and extract as many useful fields as possible
-(name, address, phone, date of birth, passport number, etc.).
-
-Return ONLY valid JSON in this exact structure (no extra keys, no comments):
+1. Analyze the SOURCE document.
+2. Extract structured fields: names, addresses, IDs, tax data, etc.
+3. Analyze the TARGET form PDF — extract every field name.
+4. Produce JSON ONLY:
 
 {
-  "fields": {
-    "full_name": "John Doe",
-    "date_of_birth": "1990-01-01",
-    "address_line_1": "123 Example Street",
-    "address_line_2": "Apt 4B",
-    "city": "London",
-    "state_or_region": "Greater London",
-    "postal_code": "SW1A 1AA",
-    "country": "United Kingdom",
-    "phone_number": "+44 1234 567890",
-    "email": "example@email.com",
-    "passport_number": "123456789",
-    "nationality": "British",
-    "id_number": "",
-    "tax_id": "",
-    "employer_name": "",
-    "job_title": "",
-    "income": "",
-    "marital_status": "",
-    "spouse_name": "",
-    "dependent_names": ""
+  "fields": { ...extractedValues },
+  "mappings": {
+     "pdfFieldName": "field_key"
   }
 }
 
-Rules:
-- Only output valid JSON.
-- If a field is unknown, use an empty string "".
-- You may include additional keys inside "fields" if useful.
-- Do NOT include any explanation text, only JSON.
-
-Document text starts below:
----
-${truncatedText}
----
-        `.trim(),
+NO explanation. ONLY JSON.
+              `,
+            },
+            {
+              type: "document",
+              source: {
+                type: "base64",
+                media_type: "application/pdf",
+                data: sourceBase64,
+              },
+            },
+            {
+              type: "document",
+              source: {
+                type: "base64",
+                media_type: "application/pdf",
+                data: targetBase64,
+              },
+            },
+          ],
         },
       ],
     });
 
-    let extractText = "";
-    const firstBlock = extractResponse.content[0];
-
-    if (firstBlock.type === "text") {
-      extractText = firstBlock.text;
-    } else {
-      throw new Error("Claude extraction returned unexpected content format.");
+    const block = aiResponse.content[0];
+    if (block.type !== "text") {
+      throw new Error("Claude returned unexpected format (not text).");
     }
 
-    console.log("🧠 Claude extraction raw JSON (truncated):", extractText.slice(0, 200));
+    const raw = block.text.replace(/```json|```/g, "").trim();
+    console.log("🧠 Claude JSON (truncated):", raw.slice(0, 200));
 
-    const extracted = parseClaudeJSON<ExtractedFields>(extractText);
+    const parsed = JSON.parse(raw);
+    const fields = parsed.fields || {};
+    const mappings = parsed.mappings || {};
 
-    if (!extracted.fields || typeof extracted.fields !== "object") {
-      throw new Error("Extracted JSON missing valid `fields` object.");
-    }
+    console.log("📦 Extracted fields:", Object.keys(fields));
+    console.log("📦 Mappings:", mappings);
 
-    const extractedFields = extracted.fields;
-    console.log("📦 Extracted field keys:", Object.keys(extractedFields));
+    // ============================
+    //   STEP 2 — Fill Target PDF
+    // ============================
 
-    // -------- STEP 3: Load target PDF & inspect form fields --------
-    console.log("📄 Loading target PDF...");
-    const targetBytes = new Uint8Array(await target.arrayBuffer());
-    const pdfDoc = await PDFDocument.load(targetBytes);
+    console.log("📄 Loading target PDF…");
+    const pdfBytes = Buffer.from(targetBase64, "base64");
+    const pdfDoc = await PDFDocument.load(pdfBytes);
 
-    // Try to get form fields (AcroForm)
-    let form;
-    let formFields: { name: string; field: any }[] = [];
+    const pdfForm = pdfDoc.getForm();
+    const pdfFields = pdfForm.getFields();
+    const fieldNames = pdfFields.map((f) => f.getName());
 
-    try {
-      form = pdfDoc.getForm();
-      const rawFields = form.getFields();
-      formFields = rawFields.map((f: any) => ({
-        name: f.getName(),
-        field: f,
-      }));
-    } catch (e) {
-      console.warn("⚠️ No form fields found or getForm failed:", e);
-      form = null;
-      formFields = [];
-    }
+    console.log("🧾 Detected PDF fields:", fieldNames);
 
-    const hasFormFields = formFields.length > 0;
-    console.log(
-      hasFormFields
-        ? `🧾 Detected ${formFields.length} form fields in target PDF.`
-        : "🧾 No form fields detected. Will use overlay fallback.",
-    );
+    let formFieldsFound = fieldNames.length > 0;
 
-    // -------- STEP 4: If we have fields, ask Claude to map them --------
-    let mapping: MappingResult | null = null;
+    // Try structured form filling
+    if (formFieldsFound) {
+      console.log("✍️ Filling AcroForm fields…");
 
-    if (hasFormFields) {
-      const targetFieldNames = formFields.map((f) => f.name).slice(0, 80); // avoid huge prompts
+      for (const pdfFieldName of fieldNames) {
+        const sourceKey = mappings[pdfFieldName];
+        if (!sourceKey) continue;
 
-      console.log("📋 Target field names:", targetFieldNames);
-
-      const mappingResponse = await anthropic.messages.create({
-        model: "claude-sonnet-4-5-20250929",
-        max_tokens: 2000,
-        temperature: 0,
-        messages: [
-          {
-            role: "user",
-            content: `
-You are FormForge AI.
-
-We extracted the following source fields (key -> value):
-
-${JSON.stringify(extractedFields, null, 2)}
-
-We also detected these target PDF form field names:
-
-${JSON.stringify(targetFieldNames, null, 2)}
-
-Your job:
-Map each target PDF form field name to the most appropriate source field key
-from "fields". If you don't find a suitable source field, map it to null.
-
-Return ONLY valid JSON with this exact shape:
-
-{
-  "mappings": {
-    "TargetFieldName1": "source_field_key_or_null",
-    "TargetFieldName2": null
-  }
-}
-
-Rules:
-- Use case-insensitive, fuzzy matching ("DOB" ~ "date_of_birth", etc.).
-- Prefer semantic meaning, not exact string matches.
-- If unsure, use null.
-- No explanation text, only JSON.
-          `.trim(),
-          },
-        ],
-      });
-
-      let mappingText = "";
-      const mapBlock = mappingResponse.content[0];
-      if (mapBlock.type === "text") {
-        mappingText = mapBlock.text;
-      } else {
-        throw new Error("Claude mapping returned unexpected content format.");
-      }
-
-      console.log("🧠 Claude mapping JSON (truncated):", mappingText.slice(0, 200));
-
-      mapping = parseClaudeJSON<MappingResult>(mappingText);
-      if (!mapping.mappings || typeof mapping.mappings !== "object") {
-        throw new Error("Mapping JSON missing valid `mappings` object.");
-      }
-    }
-
-    // -------- STEP 5: Apply Hybrid Fill Strategy --------
-    if (hasFormFields && mapping) {
-      console.log("✍️ Filling detected form fields (Hybrid: form mode)...");
-
-      for (const { name, field } of formFields) {
-        const sourceKey =
-          mapping.mappings[name] ?? null;
-
-        if (!sourceKey) {
-          continue;
-        }
-
-        const value = extractedFields[sourceKey];
-        if (value == null || value === "") continue;
-
-        const anyField = field as any;
+        const value = fields[sourceKey];
+        if (!value) continue;
 
         try {
-          // Text fields
-          if (typeof anyField.setText === "function") {
-            anyField.setText(String(value));
-          }
-          // Checkboxes (simple heuristic)
-          else if (
-            typeof anyField.check === "function" ||
-            typeof anyField.uncheck === "function"
-          ) {
-            const v = String(value).toLowerCase();
-            const shouldCheck =
-              v === "yes" ||
-              v === "true" ||
-              v === "y" ||
-              v === "1" ||
-              v === "checked";
-            if (shouldCheck && typeof anyField.check === "function") {
-              anyField.check();
-            } else if (!shouldCheck && typeof anyField.uncheck === "function") {
-              anyField.uncheck();
-            }
-          }
-          // Dropdowns / option lists
-          else if (typeof anyField.select === "function") {
-            anyField.select(String(value));
-          }
-
-          console.log(`  ✅ Filled field "${name}" from "${sourceKey}" = ${value}`);
-        } catch (fillErr: any) {
-          console.warn(`  ⚠️ Failed to fill field "${name}":`, fillErr?.message || fillErr);
+          const textField = pdfForm.getTextField(pdfFieldName);
+          textField.setText(String(value));
+        } catch {
+          console.log(`⚠️ Could not fill field: ${pdfFieldName}`);
         }
       }
-    } else {
-      console.log("✍️ No fields to map. Using overlay mode on first page...");
-      // FALLBACK: overlay text block on first page (your original behavior, slightly upgraded)
-      const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    }
+
+    // Fallback for scanned / non-fillable PDFs
+    if (!formFieldsFound) {
+      console.log("⚠️ No fillable fields. Drawing text fallback…");
+
       const pages = pdfDoc.getPages();
-      const firstPage = pages[0];
+      const page = pages[0];
+      const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
       let y = 750;
 
-      firstPage.drawText("FormForge AI Auto-Filled Data:", {
+      page.drawText("Auto-filled by FormForge:", {
         x: 40,
         y,
         size: 14,
+        color: rgb(0.2, 0.6, 1),
         font,
-        color: rgb(0.2, 0.8, 1),
       });
 
       y -= 30;
 
-      for (const [key, value] of Object.entries(extractedFields)) {
-        if (!value) continue;
-
-        firstPage.drawText(`${key}: ${value}`, {
+      for (const [key, value] of Object.entries(fields)) {
+        page.drawText(`${key}: ${value}`, {
           x: 40,
           y,
           size: 10,
-          font,
           color: rgb(1, 1, 1),
+          font,
         });
-
-        y -= 18;
+        y -= 16;
         if (y < 40) break;
       }
     }
 
-    // -------- STEP 6: Finalize PDF & return --------
-    console.log("💾 Saving filled PDF...");
-    const filledPdfBytes = await pdfDoc.save();
-    const fileBuffer = Buffer.from(filledPdfBytes);
+    // Save and send back PDF
+    console.log("💾 Saving final PDF…");
+    // >>> DEBUG TEST: Draw bright red text at top-left corner <<<
+const pages = pdfDoc.getPages();
+const page = pages[0]; // force first page
 
-    console.log("✅ PDF ready — returning file.");
+page.drawText("DEBUG TEST TEXT", {
+  x: 20,
+  y: page.getHeight() - 40, // top-left
+  size: 28,
+  color: rgb(1, 0, 0), // bright red
+});
+console.log("🔍 DEBUG TEXT DRAWN ON PAGE");
+    const finalBytes = await pdfDoc.save();
+    const buffer = Buffer.from(finalBytes);
 
-    return new NextResponse(fileBuffer, {
+    return new NextResponse(buffer, {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition":
-          'attachment; filename="formforge_filled.pdf"',
+        "Content-Disposition": `attachment; filename="filled_${target.name}"`,
       },
     });
+
   } catch (err: any) {
-    console.error("🔥 /api/fill error:", err);
+    console.error("🔥 /api/fill ERROR:", err);
     return NextResponse.json(
-      {
-        error: err?.message || "Internal server error",
-      },
-      { status: 500 },
+      { error: err.message || "Internal server error" },
+      { status: 500 }
     );
   }
 }
